@@ -4,6 +4,7 @@ import argparse
 import io
 import sys
 import json
+import simplejson
 import logging
 import collections
 import threading
@@ -18,6 +19,7 @@ from oauth2client import tools
 from tempfile import TemporaryFile
 
 from google.cloud import bigquery
+from google.oauth2 import service_account
 from google.cloud.bigquery.job import SourceFormat
 from google.cloud.bigquery import Dataset, WriteDisposition
 from google.cloud.bigquery import SchemaField
@@ -107,7 +109,7 @@ def build_schema(schema):
 
     return SCHEMA
 
-def persist_lines_job(project_id, dataset_id, lines=None, truncate=False, validate_records=True):
+def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, truncate=False, validate_records=True):
     state = None
     schemas = {}
     key_properties = {}
@@ -115,7 +117,7 @@ def persist_lines_job(project_id, dataset_id, lines=None, truncate=False, valida
     rows = {}
     errors = {}
 
-    bigquery_client = bigquery.Client(project=project_id)
+    bigquery_client = bigquery.Client(project=project_id,credentials=credentials)
 
     # try:
     #     dataset = bigquery_client.create_dataset(Dataset(dataset_ref)) or Dataset(dataset_ref)
@@ -195,7 +197,7 @@ def persist_lines_job(project_id, dataset_id, lines=None, truncate=False, valida
 
     return state
 
-def persist_lines_stream(project_id, dataset_id, lines=None, validate_records=True):
+def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, validate_records=True):
     state = None
     schemas = {}
     key_properties = {}
@@ -203,7 +205,7 @@ def persist_lines_stream(project_id, dataset_id, lines=None, validate_records=Tr
     rows = {}
     errors = {}
 
-    bigquery_client = bigquery.Client(project=project_id)
+    bigquery_client = bigquery.Client(project=project_id,credentials=credentials)
 
     dataset_ref = bigquery_client.dataset(dataset_id)
     dataset = Dataset(dataset_ref)
@@ -228,7 +230,12 @@ def persist_lines_stream(project_id, dataset_id, lines=None, validate_records=Tr
             if validate_records:
                 validate(msg.record, schema)
 
-            errors[msg.stream] = bigquery_client.insert_rows_json(tables[msg.stream], [msg.record])
+            j = simplejson.dumps(msg.record)
+            jparsed = simplejson.loads(j, use_decimal=False)
+
+            logger.info("Streaming for {}".format(jparsed))
+
+            errors[msg.stream] = bigquery_client.insert_rows_json(tables[msg.stream], [jparsed])
             rows[msg.stream] += 1
 
             state = None
@@ -302,10 +309,15 @@ def main():
 
     input = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
 
+    credentials = service_account.Credentials.from_service_account_file(
+        config['key_path'],
+        scopes=["https://www.googleapis.com/auth/cloud-platform"],
+    )
+
     if config.get('stream_data', True):
-        state = persist_lines_stream(config['project_id'], config['dataset_id'], input, validate_records=validate_records)
+        state = persist_lines_stream(config['project_id'], config['dataset_id'], credentials, input, validate_records=validate_records)
     else:
-        state = persist_lines_job(config['project_id'], config['dataset_id'], input, truncate=truncate, validate_records=validate_records)
+        state = persist_lines_job(config['project_id'], config['dataset_id'], credentials, input, truncate=truncate, validate_records=validate_records)
 
     emit_state(state)
     logger.debug("Exiting normally")
