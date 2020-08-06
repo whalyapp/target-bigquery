@@ -11,6 +11,7 @@ import threading
 import http.client
 import urllib
 import pkg_resources
+from pathlib import Path
 
 from jsonschema import validate
 import singer
@@ -292,6 +293,10 @@ def collect():
     except:
         logger.debug('Collection request failed')
 
+def load_json(path):
+    with open(path) as f:
+        return json.load(f)
+
 def main():
     with open(flags.config) as input:
         config = json.load(input)
@@ -317,10 +322,10 @@ def main():
             try:
                 config['client_secrets'] = load_json(config['key_file_location'])
             except ValueError:
-                LOGGER.critical("tap-google-analytics: The JSON definition in '{}' has errors".format(config['key_file_location']))
+                logger.critical("tap-google-analytics: The JSON definition in '{}' has errors".format(config['key_file_location']))
                 sys.exit(1)
         else:
-            LOGGER.critical("tap-google-analytics: '{}' file not found".format(config['key_file_location']))
+            logger.critical("tap-google-analytics: '{}' file not found".format(config['key_file_location']))
             sys.exit(1)
 
         credentials = ServiceAccountCredentials.from_json_keyfile_dict(config['client_secrets'], SCOPES)
