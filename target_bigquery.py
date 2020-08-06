@@ -18,6 +18,8 @@ import singer
 from oauth2client import tools
 from tempfile import TemporaryFile
 
+from oauth2client.service_account import ServiceAccountCredentials
+
 from google.cloud import bigquery
 from google.oauth2 import service_account
 from google.cloud.bigquery.job import SourceFormat
@@ -309,10 +311,21 @@ def main():
 
     input = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
 
-    credentials = service_account.Credentials.from_service_account_file(
-        config['key_path'],
-        scopes=["https://www.googleapis.com/auth/cloud-platform"],
-    )
+    # If using a service account, validate that the client_secrets.json file exists and load it
+    if config.get('key_file_location'):
+        if Path(config['key_file_location']).is_file():
+            try:
+                config['client_secrets'] = load_json(config['key_file_location'])
+            except ValueError:
+                LOGGER.critical("tap-google-analytics: The JSON definition in '{}' has errors".format(config['key_file_location']))
+                sys.exit(1)
+        else:
+            LOGGER.critical("tap-google-analytics: '{}' file not found".format(config['key_file_location']))
+            sys.exit(1)
+
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(config['client_secrets'], SCOPES)
+    else:
+        credentials = None
 
     if config.get('stream_data', True):
         state = persist_lines_stream(config['project_id'], config['dataset_id'], credentials, input, validate_records=validate_records)
