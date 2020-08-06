@@ -15,11 +15,9 @@ from pathlib import Path
 
 from jsonschema import validate
 import singer
+from singer import utils
 
-from oauth2client import tools
 from tempfile import TemporaryFile
-
-from oauth2client.service_account import ServiceAccountCredentials
 
 from google.cloud import bigquery
 from google.oauth2 import service_account
@@ -29,13 +27,11 @@ from google.cloud.bigquery import SchemaField
 from google.cloud.bigquery import LoadJobConfig
 from google.api_core import exceptions
 
-try:
-    parser = argparse.ArgumentParser(parents=[tools.argparser])
-    parser.add_argument('-c', '--config', help='Config file', required=True)
-    flags = parser.parse_args()
-
-except ImportError:
-    flags = None
+REQUIRED_CONFIG_KEYS = [
+    "project_id",
+    "dataset_id",
+    "validate_records"
+]
 
 logging.getLogger('googleapiclient.discovery_cache').setLevel(logging.ERROR)
 logger = singer.get_logger()
@@ -297,45 +293,51 @@ def load_json(path):
     with open(path) as f:
         return json.load(f)
 
-def main():
-    with open(flags.config) as input:
-        config = json.load(input)
+def process_args():
+    # Parse command line arguments
+    args = utils.parse_args(REQUIRED_CONFIG_KEYS)
 
-    if not config.get('disable_collection', False):
+    # If using a service account, validate that the client_secrets.json file exists and load it
+    if args.config.get('key_file_location'):
+        if Path(args.config['key_file_location']).is_file():
+            try:
+                args.config['client_secrets'] = load_json(args.config['key_file_location'])
+            except ValueError:
+                logger.critical("tap-google-analytics: The JSON definition in '{}' has errors".format(args.config['key_file_location']))
+                sys.exit(1)
+        else:
+            logger.critical("tap-google-analytics: '{}' file not found".format(args.config['key_file_location']))
+            sys.exit(1)
+
+    return args
+
+def main():
+    args = process_args()
+
+    if not args.config.get('disable_collection', False):
         logger.info('Sending version information to stitchdata.com. ' +
                     'To disable sending anonymous usage data, set ' +
                     'the config parameter "disable_collection" to true')
         threading.Thread(target=collect).start()
 
-    if config.get('replication_method') == 'FULL_TABLE':
+    if args.config.get('replication_method') == 'FULL_TABLE':
         truncate = True
     else:
         truncate = False
 
-    validate_records = config.get('validate_records', True)
+    validate_records = args.config.get('validate_records', True)
 
     input = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
 
-    # If using a service account, validate that the client_secrets.json file exists and load it
-    if config.get('key_file_location'):
-        if Path(config['key_file_location']).is_file():
-            try:
-                config['client_secrets'] = load_json(config['key_file_location'])
-            except ValueError:
-                logger.critical("tap-google-analytics: The JSON definition in '{}' has errors".format(config['key_file_location']))
-                sys.exit(1)
-        else:
-            logger.critical("tap-google-analytics: '{}' file not found".format(config['key_file_location']))
-            sys.exit(1)
-
-        credentials = ServiceAccountCredentials.from_json_keyfile_dict(config['client_secrets'], SCOPES)
+    if args.config.get('client_secrets'):
+        credentials = service_account.Credentials.from_service_account_info(args.config['client_secrets'], scopes=SCOPES)
     else:
         credentials = None
 
-    if config.get('stream_data', True):
-        state = persist_lines_stream(config['project_id'], config['dataset_id'], credentials, input, validate_records=validate_records)
+    if args.config.get('stream_data', True):
+        state = persist_lines_stream(args.config['project_id'], args.config['dataset_id'], credentials, input, validate_records=validate_records)
     else:
-        state = persist_lines_job(config['project_id'], config['dataset_id'], credentials, input, truncate=truncate, validate_records=validate_records)
+        state = persist_lines_job(args.config['project_id'], args.config['dataset_id'], credentials, input, truncate=truncate, validate_records=validate_records)
 
     emit_state(state)
     logger.debug("Exiting normally")
