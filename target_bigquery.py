@@ -12,6 +12,8 @@ import http.client
 import urllib
 import pkg_resources
 from pathlib import Path
+import re
+import random
 
 from jsonschema import validate
 import singer
@@ -52,8 +54,17 @@ def emit_state(state):
 def clear_dict_hook(items):
     return {k: v if v is not None else '' for k, v in items}
 
+def formatName(name, recordType="table"):
+    formattedName = re.sub('[^A-Za-z0-9_]', "_", name)
+    if (recordType == "table"):
+        # if (formattedName == "Table" or formattedName == "table"):
+        #     formattedName = formattedName + "-" + "1"
+        return formattedName[:1024]
+    else:
+        return formattedName[:128]
+
 def define_schema(field, name):
-    schema_name = name
+    schema_name = formatName(name, "field")
     schema_type = "STRING"
     schema_mode = "NULLABLE"
     schema_description = None
@@ -72,17 +83,33 @@ def define_schema(field, name):
         else:
             schema_mode = 'required'
         schema_type = field['type'][-1]
+        logger.debug('found schema type in list {}'.format(schema_type))
     else:
         schema_type = field['type']
+
     if schema_type == "object":
         schema_type = "RECORD"
+        logger.debug("builing for object {}".format(schema_name))
         schema_fields = tuple(build_schema(field))
+        logger.debug("built for object {}".format(schema_name))
+        logger.debug("with {}".format(schema_fields))
     if schema_type == "array":
-        schema_type = field.get('items').get('type')
+        t_type = field.get('items').get('type')
+        if isinstance(t_type, list):
+            schema_type = t_type[-1]
+        else:
+            schema_type = t_type
+
+        if schema_type == "array":
+            return define_schema(field.get('items'), name)
+            
         schema_mode = "REPEATED"
         if schema_type == "object":
-          schema_type = "RECORD"
-          schema_fields = tuple(build_schema(field.get('items')))
+            schema_type = "RECORD"
+            logger.debug("builing for object in array {}".format(schema_name))
+            schema_fields = tuple(build_schema(field.get('items')))
+            logger.debug("built for object in array {}".format(schema_name))
+            logger.info("with {}".format(schema_fields))
 
 
     if schema_type == "string":
@@ -97,16 +124,26 @@ def define_schema(field, name):
 
 def build_schema(schema):
     SCHEMA = []
+    logger.info("start building schema")
     for key in schema['properties'].keys():
-        
+        logger.info("building schema with key {}".format(key))
         if not (bool(schema['properties'][key])):
             # if we endup with an empty record.
             continue
 
         schema_name, schema_type, schema_mode, schema_description, schema_fields = define_schema(schema['properties'][key], key)
+        logger.info("building schema with %s %s %s %s %s", schema_name, schema_type, schema_mode, schema_description, schema_fields)
         SCHEMA.append(SchemaField(schema_name, schema_type, schema_mode, schema_description, schema_fields))
 
     return SCHEMA
+
+def formatRecord(json):
+    for key in json.keys():
+        new_key = formatName(key, "field")
+        json[new_key] = json.pop(key)
+        if isinstance(json[new_key], dict) == True:
+            json[new_key] = formatRecord(json[new_key])
+    return json
 
 def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, truncate=False, validate_records=True):
     state = None
@@ -139,8 +176,13 @@ def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, trun
             if validate_records:
                 validate(msg.record, schema)
 
+            # we should apply the same transformation to the object key than the table / field names...
+            record = msg.record
+            logger.info("processing record in job - {}".format(record))
+            
+
             # NEWLINE_DELIMITED_JSON expects literal JSON formatted data, with a newline character splitting each row.
-            dat = bytes(json.dumps(msg.record) + '\n', 'UTF-8')
+            dat = bytes(json.dumps(record) + '\n', 'UTF-8')
 
             rows[msg.stream].write(dat)
             #rows[msg.stream].write(bytes(str(msg.record) + '\n', 'UTF-8'))
@@ -231,10 +273,14 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
 
             j = simplejson.dumps(msg.record)
             jparsed = simplejson.loads(j, use_decimal=False)
+            jparsedFormated = formatRecord(jparsed)
+            
+            # logger.info("Streaming for {}".format(jparsedFormated))
 
-            logger.info("Streaming for {}".format(jparsed))
-
-            errors[msg.stream] = bigquery_client.insert_rows_json(tables[msg.stream], [jparsed])
+            err = bigquery_client.insert_rows_json(tables[msg.stream], [jparsedFormated], ignore_unknown_values=True, skip_invalid_rows=False)
+            if len(err):
+                logger.error("Error syncing object {} with formatted payload {} got the following errors {}".format(msg.stream, jparsedFormated, err))
+            errors[msg.stream] = err
             rows[msg.stream] += 1
 
             state = None
@@ -247,7 +293,11 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             table = msg.stream 
             schemas[table] = msg.schema
             key_properties[table] = msg.key_properties
-            tables[table] = bigquery.Table(dataset.table(table), schema=build_schema(schemas[table]))
+            logger.info("Dealing with {}".format(table))
+            logger.info("Table Schema Info - {}".format(dataset.table(table)))
+            logger.info("Raw Schema Info - {}".format(schemas[table]))
+            logger.info("Schema Info - {}".format(build_schema(schemas[table])))
+            tables[table] = bigquery.Table(dataset.table(formatName(table, "table")), schema=build_schema(schemas[table]))
             rows[table] = 0
             errors[table] = None
             try:
@@ -267,7 +317,7 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             logging.info('Loaded {} row(s) into {}:{}'.format(rows[table], dataset_id, table, tables[table].path))
             emit_state(state)
         else:
-            logging.error('Errors:', errors[table], sep=" ")
+            logging.error('Errors: {}'.format(errors[table]))
 
     return state
 
