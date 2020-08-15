@@ -15,7 +15,7 @@ setup(name='target-bigquery',
           'google-api-python-client>=1.6.2',
           'google-cloud>=0.34.0',
           'google-cloud-bigquery>=1.9.0',
-          'oauth2client',
+          'google-auth'
       ],
       entry_points='''
           [console_scripts]
