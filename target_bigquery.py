@@ -238,7 +238,7 @@ def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, trun
 
     return state
 
-def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, validate_records=True):
+def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, validate_records=True, collision_suffix=None):
     state = None
     schemas = {}
     key_properties = {}
@@ -374,6 +374,9 @@ def main():
         truncate = True
     else:
         truncate = False
+
+    if args.config.get('collision_suffix'):
+        collision_suffix = args.config.get('collision_suffix')
 
     validate_records = args.config.get('validate_records', True)
 
