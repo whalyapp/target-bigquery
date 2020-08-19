@@ -10,6 +10,8 @@ import collections
 import threading
 import http.client
 import urllib
+import calendar
+import time
 import pkg_resources
 from pathlib import Path
 import re
@@ -43,6 +45,15 @@ CLIENT_SECRET_FILE = 'client_secret.json'
 APPLICATION_NAME = 'Singer BigQuery Target'
 
 StreamMeta = collections.namedtuple('StreamMeta', ['schema', 'key_properties', 'bookmark_properties'])
+
+SINGER_RECEIVED_AT = 'sdc_received_at'
+SINGER_BATCHED_AT = 'sdc_batched_at'
+SINGER_SEQUENCE = 'sdc_sequence'
+SINGER_TABLE_VERSION = 'sdc_table_version'
+SINGER_PK = 'sdc_primary_key'
+SINGER_SOURCE_PK_PREFIX = 'sdc_source_key_'
+SINGER_LEVEL = 'sdc_level_{}_id'
+SINGER_VALUE = 'sdc_value'
 
 def emit_state(state):
     if state is not None:
@@ -125,13 +136,40 @@ def define_schema(field, name):
 def build_schema(schema):
     SCHEMA = []
     logger.info("start building schema")
-    for key in schema['properties'].keys():
+
+    properties = schema['properties']
+
+    if SINGER_RECEIVED_AT not in properties:
+        properties[SINGER_RECEIVED_AT] = {
+            'type': ['null', 'string'],
+            'format': 'date-time'
+        }
+
+    if SINGER_SEQUENCE not in properties:
+        properties[SINGER_SEQUENCE] = {
+            'type': ['null', 'integer']
+        }
+
+    if SINGER_TABLE_VERSION not in properties:
+        properties[SINGER_TABLE_VERSION] = {
+            'type': ['null', 'integer']
+        }
+
+    if SINGER_BATCHED_AT not in properties:
+        properties[SINGER_BATCHED_AT] = {
+            'type': ['null', 'string'],
+            'format': 'date-time'
+        }
+
+    # logger.info("GENERATED SCHEMA - {}".format(properties))
+
+    for key in properties.keys():
         logger.info("building schema with key {}".format(key))
-        if not (bool(schema['properties'][key])):
+        if not (bool(properties[key])):
             # if we endup with an empty record.
             continue
 
-        schema_name, schema_type, schema_mode, schema_description, schema_fields = define_schema(schema['properties'][key], key)
+        schema_name, schema_type, schema_mode, schema_description, schema_fields = define_schema(properties[key], key)
         logger.info("building schema with %s %s %s %s %s", schema_name, schema_type, schema_mode, schema_description, schema_fields)
         SCHEMA.append(SchemaField(schema_name, schema_type, schema_mode, schema_description, schema_fields))
 
@@ -238,7 +276,7 @@ def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, trun
 
     return state
 
-def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, validate_records=True, collision_suffix=None):
+def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, validate_records=True, collision_suffix=None, current_batch=None):
     state = None
     schemas = {}
     key_properties = {}
@@ -267,14 +305,30 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
                 raise Exception("A record for stream {} was encountered before a corresponding schema".format(msg.stream))
 
             schema = schemas[msg.stream]
+            current_time = calendar.timegm(time.gmtime())
 
             if validate_records:
                 validate(msg.record, schema)
 
+            logger.info("Got the following msg - {}".format(msg))
+
             j = simplejson.dumps(msg.record)
             jparsed = simplejson.loads(j, use_decimal=False)
             jparsedFormated = formatRecord(jparsed)
-            
+
+            if msg.version:
+                jparsedFormated[SINGER_TABLE_VERSION] = msg.version
+
+            if msg.time_extracted and jparsedFormated.get(SINGER_RECEIVED_AT) is None:
+                jparsedFormated[SINGER_RECEIVED_AT] = msg.time_extracted
+
+            # if self.use_uuid_pk and record.get(singer.PK) is None:
+            #     record[SINGER_PK] = str(uuid.uuid4())
+
+            jparsedFormated[SINGER_BATCHED_AT] = current_batch
+
+            jparsedFormated[SINGER_SEQUENCE] = current_time
+                
             # logger.info("Streaming for {}".format(jparsedFormated))
 
             err = bigquery_client.insert_rows_json(tables[msg.stream], [jparsedFormated], ignore_unknown_values=True, skip_invalid_rows=False)
@@ -318,6 +372,8 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             emit_state(state)
         else:
             logging.error('Errors: {}'.format(errors[table]))
+
+    # todo we should clean the tables by removing the duplicates
 
     return state
 
@@ -363,6 +419,7 @@ def process_args():
 
 def main():
     args = process_args()
+    current_batch = calendar.timegm(time.gmtime())
 
     if not args.config.get('disable_collection', False):
         logger.info('Sending version information to stitchdata.com. ' +
@@ -388,7 +445,7 @@ def main():
         credentials = None
 
     if args.config.get('stream_data', True):
-        state = persist_lines_stream(args.config['project_id'], args.config['dataset_id'], credentials, input, validate_records=validate_records)
+        state = persist_lines_stream(args.config['project_id'], args.config['dataset_id'], credentials, input, validate_records=validate_records, current_batch=current_batch)
     else:
         state = persist_lines_job(args.config['project_id'], args.config['dataset_id'], credentials, input, truncate=truncate, validate_records=validate_records)
 
