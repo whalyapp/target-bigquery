@@ -161,6 +161,11 @@ def build_schema(schema):
             'format': 'date-time'
         }
 
+    if SINGER_PK not in properties:
+        properties[SINGER_PK] = {
+            'type': ['null', 'string']
+        }
+
     # logger.info("GENERATED SCHEMA - {}".format(properties))
 
     for key in properties.keys():
@@ -182,6 +187,13 @@ def formatRecord(json):
         if isinstance(json[new_key], dict) == True:
             json[new_key] = formatRecord(json[new_key])
     return json
+
+def buildPrimaryKey(record, key_properties):
+    primaryKey = ""
+    for key in key_properties:
+        formattedKey = formatName(key, "field")
+        primaryKey = str(record[formattedKey]) if primaryKey == "" else primaryKey + ":" + str(record[formattedKey])
+    return primaryKey
 
 def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, truncate=False, validate_records=True):
     state = None
@@ -310,26 +322,29 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             if validate_records:
                 validate(msg.record, schema)
 
-            logger.info("Got the following msg - {}".format(msg))
+            # logger.info("Got the following schema - {}".format(schema))
+            # logger.info("got the following metadata - {}".format(key_properties[msg.stream]))
 
             j = simplejson.dumps(msg.record)
             jparsed = simplejson.loads(j, use_decimal=False)
             jparsedFormated = formatRecord(jparsed)
 
             if msg.version:
-                jparsedFormated[SINGER_TABLE_VERSION] = msg.version
+                jparsedFormated[SINGER_TABLE_VERSION] = str(msg.version)
 
             if msg.time_extracted and jparsedFormated.get(SINGER_RECEIVED_AT) is None:
-                jparsedFormated[SINGER_RECEIVED_AT] = msg.time_extracted
+                jparsedFormated[SINGER_RECEIVED_AT] = str(msg.time_extracted)
+
 
             # if self.use_uuid_pk and record.get(singer.PK) is None:
-            #     record[SINGER_PK] = str(uuid.uuid4())
+            jparsedFormated[SINGER_PK] = buildPrimaryKey(jparsedFormated, key_properties[msg.stream])
+            # logger.info("got the following primary key - {}".format(jparsedFormated[SINGER_PK]))
 
             jparsedFormated[SINGER_BATCHED_AT] = current_batch
 
             jparsedFormated[SINGER_SEQUENCE] = current_time
                 
-            # logger.info("Streaming for {}".format(jparsedFormated))
+            logger.info("Streaming for {}".format(jparsedFormated))
 
             err = bigquery_client.insert_rows_json(tables[msg.stream], [jparsedFormated], ignore_unknown_values=True, skip_invalid_rows=False)
             if len(err):
