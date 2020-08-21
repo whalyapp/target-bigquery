@@ -384,6 +384,25 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
     for table in errors.keys():
         if not errors[table]:
             logging.info('Loaded {} row(s) into {}:{}'.format(rows[table], dataset_id, table, tables[table].path))
+            tableName = "{}.{}".format(dataset_id, table)
+            sql = """
+MERGE {} t
+USING (
+  SELECT row[OFFSET(0)].* FROM (
+    SELECT ARRAY_AGG(t ORDER BY t.sdc_batched_at DESC LIMIT 1) row
+    FROM {} t
+    GROUP BY t.sdc_primary_key 
+  ) 
+) s
+ON t.sdc_primary_key = s.sdc_primary_key and t.sdc_batched_at = s.sdc_batched_at
+WHEN NOT MATCHED BY SOURCE THEN DELETE
+WHEN NOT MATCHED BY TARGET THEN INSERT ROW
+            """.format(tableName,tableName)
+            logging.info('Executing the final transformation into {}'.format(tableName))
+            query_job = bigquery_client.query(sql)
+            results = query_job.result()
+            if results:
+                logger.info("Cleaning table {} with sql query {} got the following results {}".format(tableName, sql, results))
             emit_state(state)
         else:
             logging.error('Errors: {}'.format(errors[table]))
