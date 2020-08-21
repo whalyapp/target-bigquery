@@ -46,14 +46,14 @@ APPLICATION_NAME = 'Singer BigQuery Target'
 
 StreamMeta = collections.namedtuple('StreamMeta', ['schema', 'key_properties', 'bookmark_properties'])
 
-SINGER_RECEIVED_AT = 'sdc_received_at'
-SINGER_BATCHED_AT = 'sdc_batched_at'
-SINGER_SEQUENCE = 'sdc_sequence'
-SINGER_TABLE_VERSION = 'sdc_table_version'
-SINGER_PK = 'sdc_primary_key'
-SINGER_SOURCE_PK_PREFIX = 'sdc_source_key_'
-SINGER_LEVEL = 'sdc_level_{}_id'
-SINGER_VALUE = 'sdc_value'
+SINGER_RECEIVED_AT = '_wly_received_at'
+SINGER_BATCHED_AT = '_wly_batched_at'
+SINGER_SEQUENCE = '_wly_sequence'
+SINGER_TABLE_VERSION = '_wly_table_version'
+SINGER_PK = '_wly_primary_key'
+SINGER_SOURCE_PK_PREFIX = '_wly_source_key_'
+SINGER_LEVEL = '_wly_level_{}_id'
+SINGER_VALUE = '_wly_value'
 
 def emit_state(state):
     if state is not None:
@@ -389,12 +389,12 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
 MERGE {} t
 USING (
   SELECT row[OFFSET(0)].* FROM (
-    SELECT ARRAY_AGG(t ORDER BY t.sdc_batched_at DESC LIMIT 1) row
+    SELECT ARRAY_AGG(t ORDER BY t._wly_batched_at DESC LIMIT 1) row
     FROM {} t
-    GROUP BY t.sdc_primary_key 
+    GROUP BY t._wly_primary_key 
   ) 
 ) s
-ON t.sdc_primary_key = s.sdc_primary_key and t.sdc_batched_at = s.sdc_batched_at
+ON t._wly_primary_key = s._wly_primary_key and t._wly_batched_at = s._wly_batched_at
 WHEN NOT MATCHED BY SOURCE THEN DELETE
 WHEN NOT MATCHED BY TARGET THEN INSERT ROW
             """.format(tableName,tableName)
