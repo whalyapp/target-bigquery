@@ -67,6 +67,9 @@ def clear_dict_hook(items):
 
 def formatName(name, recordType="table"):
     formattedName = re.sub('[^A-Za-z0-9_]', "_", name)
+    if (formattedName[0].isdigit()):
+        formattedName = "_" + formattedName
+        
     if (recordType == "table"):
         # if (formattedName == "Table" or formattedName == "table"):
         #     formattedName = formattedName + "-" + "1"
@@ -399,10 +402,14 @@ WHEN NOT MATCHED BY SOURCE THEN DELETE
 WHEN NOT MATCHED BY TARGET THEN INSERT ROW
             """.format(tableName,tableName)
             logging.info('Executing the final transformation into {}'.format(tableName))
-            query_job = bigquery_client.query(sql)
-            results = query_job.result()
-            if results:
-                logger.info("Cleaning table {} with sql query {} got the following results {}".format(tableName, sql, results))
+            try:
+                query_job = bigquery_client.query(sql)
+                results = query_job.result()
+                if results:
+                    logger.info("Cleaning table {} with sql query {} got the following results {}".format(tableName, sql, results))
+            except:
+                logger.error("Failed Cleaning the Table {}".format(tableName))
+
             emit_state(state)
         else:
             logging.error('Errors: {}'.format(errors[table]))
