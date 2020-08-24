@@ -92,11 +92,11 @@ def define_schema(field, name):
                 field = types
             
     if isinstance(field['type'], list):
-        if field['type'][0] == "null":
+        if field['type'][0] == "null" or field['type'][1] == "null":
             schema_mode = 'NULLABLE'
         else:
             schema_mode = 'required'
-        schema_type = field['type'][-1]
+        schema_type = field['type'][-1] if field['type'][0] == "null" else field['type'][0]
         logger.debug('found schema type in list {}'.format(schema_type))
     else:
         schema_type = field['type']
@@ -110,7 +110,7 @@ def define_schema(field, name):
     if schema_type == "array":
         t_type = field.get('items').get('type')
         if isinstance(t_type, list):
-            schema_type = t_type[-1]
+            schema_type = t_type[-1] if t_type[0] == "null" else t_type[0]
         else:
             schema_type = t_type
 
@@ -347,7 +347,7 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
 
             jparsedFormated[SINGER_SEQUENCE] = current_time
                 
-            logger.info("Streaming for {}".format(jparsedFormated))
+            # logger.info("Streaming for {}".format(jparsedFormated))
 
             err = bigquery_client.insert_rows_json(tables[msg.stream], [jparsedFormated], ignore_unknown_values=True, skip_invalid_rows=False)
             if len(err):
@@ -413,8 +413,6 @@ WHEN NOT MATCHED BY TARGET THEN INSERT ROW
             emit_state(state)
         else:
             logging.error('Errors: {}'.format(errors[table]))
-
-    # todo we should clean the tables by removing the duplicates
 
     return state
 
