@@ -323,7 +323,10 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             current_time = calendar.timegm(time.gmtime())
 
             if validate_records:
-                validate(msg.record, schema)
+                try:
+                    validate(msg.record, schema)
+                except:
+                    logger.error("unable to validate {}".format(msg.record))
 
             # logger.info("Got the following schema - {}".format(schema))
             # logger.info("got the following metadata - {}".format(key_properties[msg.stream]))
