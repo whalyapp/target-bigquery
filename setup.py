@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-from setuptools import setup
+from setuptools import setup, find_packages
 
 setup(name='target-bigquery',
       version='1.4.0',
@@ -21,4 +21,5 @@ setup(name='target-bigquery',
           [console_scripts]
           target-bigquery=target_bigquery:main
       ''',
+      packages=find_packages()
 )

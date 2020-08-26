@@ -31,6 +31,8 @@ from google.cloud.bigquery import SchemaField
 from google.cloud.bigquery import LoadJobConfig
 from google.api_core import exceptions
 
+from target_bigquery.stream_tracker import BufferedSingerStream
+
 REQUIRED_CONFIG_KEYS = [
     "project_id",
     "dataset_id",
@@ -208,10 +210,10 @@ def persist_lines_job(project_id, dataset_id, credentials=None, lines=None, trun
 
     bigquery_client = bigquery.Client(project=project_id,credentials=credentials)
 
-    # try:
-    #     dataset = bigquery_client.create_dataset(Dataset(dataset_ref)) or Dataset(dataset_ref)
-    # except exceptions.Conflict:
-    #     pass
+    try:
+        dataset = bigquery_client.create_dataset(Dataset(dataset_ref)) or Dataset(dataset_ref)
+    except exceptions.Conflict:
+        pass
 
     for line in lines:
         try:
@@ -300,6 +302,7 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
     errors = {}
 
     bigquery_client = bigquery.Client(project=project_id,credentials=credentials)
+    buffered_singer_stream = BufferedSingerStream(bigquery_client)
 
     dataset_ref = bigquery_client.dataset(dataset_id)
     dataset = Dataset(dataset_ref)
@@ -351,11 +354,11 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             jparsedFormated[SINGER_SEQUENCE] = current_time
                 
             # logger.info("Streaming for {}".format(jparsedFormated))
-
-            err = bigquery_client.insert_rows_json(tables[msg.stream], [jparsedFormated], ignore_unknown_values=True, skip_invalid_rows=False)
-            if len(err):
-                logger.error("Error syncing object {} with formatted payload {} got the following errors {}".format(msg.stream, jparsedFormated, err))
-            errors[msg.stream] = err
+            buffered_singer_stream.add_record_message(tables[msg.stream], jparsedFormated)
+            # err = bigquery_client.insert_rows_json(tables[msg.stream], [jparsedFormated], ignore_unknown_values=True, skip_invalid_rows=False)
+            # if len(err):
+            #     logger.error("Error syncing object {} with formatted payload {} got the following errors {}".format(msg.stream, jparsedFormated, err))
+            # errors[msg.stream] = err
             rows[msg.stream] += 1
 
             state = None
@@ -368,14 +371,15 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             table = msg.stream 
             schemas[table] = msg.schema
             key_properties[table] = msg.key_properties
-            logger.info("Dealing with {}".format(table))
-            logger.info("Table Schema Info - {}".format(dataset.table(table)))
-            logger.info("Raw Schema Info - {}".format(schemas[table]))
-            logger.info("Schema Info - {}".format(build_schema(schemas[table])))
+            # logger.info("Dealing with {}".format(table))
+            # logger.info("Table Schema Info - {}".format(dataset.table(table)))
+            # logger.info("Raw Schema Info - {}".format(schemas[table]))
+            # logger.info("Schema Info - {}".format(build_schema(schemas[table])))
             tables[table] = bigquery.Table(dataset.table(formatName(table, "table")), schema=build_schema(schemas[table]))
             rows[table] = 0
             errors[table] = None
             try:
+                logger.info("creating table {}".format(tables[table]))
                 tables[table] = bigquery_client.create_table(tables[table])
             except exceptions.Conflict:
                 pass
@@ -386,10 +390,12 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
 
         else:
             raise Exception("Unrecognized message {}".format(msg))
+    
+    buffered_singer_stream.flush_buffer()
 
     for table in errors.keys():
         if not errors[table]:
-            logging.info('Loaded {} row(s) into {}:{}'.format(rows[table], dataset_id, table, tables[table].path))
+            logging.info("Loaded {} row(s) into {}:{}".format(rows[table], dataset_id, table, tables[table].path))
             tableName = "{}.{}".format(dataset_id, table)
             sql = """
 MERGE {} t
