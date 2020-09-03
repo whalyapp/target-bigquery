@@ -18,7 +18,7 @@ class BufferedSingerStream():
                  bigquery_client,
                  *args,
                  max_rows=1000,
-                 max_buffer_size=52428800,  # 50MB
+                 max_buffer_size=5242880,  # 5MB
                  **kwargs):
         
         self.stream = ""
@@ -54,8 +54,8 @@ class BufferedSingerStream():
             self.flush_buffer()
             self.stream = stream
 
-        if self.count % 100:
-            logger.info("buffer size {} - is buffer full {}".format(self.count, self.buffer_full))
+        # if self.count % 100:
+        #     logger.info("buffer size {} - is buffer full {}".format(self.count, self.buffer_full))
 
         self.__buffer.append(record_message)
         self.__size += get_line_size(record_message)
