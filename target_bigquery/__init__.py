@@ -138,38 +138,39 @@ def define_schema(field, name):
 
     return (schema_name, schema_type, schema_mode, schema_description, schema_fields)
 
-def build_schema(schema):
+def build_schema(schema, initial=False):
     SCHEMA = []
     logger.info("start building schema")
 
     properties = schema['properties']
 
-    if SINGER_RECEIVED_AT not in properties:
-        properties[SINGER_RECEIVED_AT] = {
-            'type': ['null', 'string'],
-            'format': 'date-time'
-        }
+    if initial == True:
+        if SINGER_RECEIVED_AT not in properties:
+            properties[SINGER_RECEIVED_AT] = {
+                'type': ['null', 'string'],
+                'format': 'date-time'
+            }
 
-    if SINGER_SEQUENCE not in properties:
-        properties[SINGER_SEQUENCE] = {
-            'type': ['null', 'integer']
-        }
+        if SINGER_SEQUENCE not in properties:
+            properties[SINGER_SEQUENCE] = {
+                'type': ['null', 'integer']
+            }
 
-    if SINGER_TABLE_VERSION not in properties:
-        properties[SINGER_TABLE_VERSION] = {
-            'type': ['null', 'integer']
-        }
+        if SINGER_TABLE_VERSION not in properties:
+            properties[SINGER_TABLE_VERSION] = {
+                'type': ['null', 'integer']
+            }
 
-    if SINGER_BATCHED_AT not in properties:
-        properties[SINGER_BATCHED_AT] = {
-            'type': ['null', 'string'],
-            'format': 'date-time'
-        }
+        if SINGER_BATCHED_AT not in properties:
+            properties[SINGER_BATCHED_AT] = {
+                'type': ['null', 'string'],
+                'format': 'date-time'
+            }
 
-    if SINGER_PK not in properties:
-        properties[SINGER_PK] = {
-            'type': ['null', 'string']
-        }
+        if SINGER_PK not in properties:
+            properties[SINGER_PK] = {
+                'type': ['null', 'string']
+            }
 
     # logger.info("GENERATED SCHEMA - {}".format(properties))
 
@@ -375,7 +376,7 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             # logger.info("Table Schema Info - {}".format(dataset.table(table)))
             # logger.info("Raw Schema Info - {}".format(schemas[table]))
             # logger.info("Schema Info - {}".format(build_schema(schemas[table])))
-            tables[table] = bigquery.Table(dataset.table(formatName(table, "table")), schema=build_schema(schemas[table]))
+            tables[table] = bigquery.Table(dataset.table(formatName(table, "table")), schema=build_schema(schemas[table], initial=True))
             rows[table] = 0
             errors[table] = None
             try:
