@@ -101,3 +101,7 @@ ENV/
 .mypy_cache/
 
 .vscode/
+
+# Local dev config
+target_bigquery_client_secrets.json
+config.json
