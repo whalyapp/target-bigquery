@@ -92,7 +92,8 @@ def define_schema(field, name):
                 schema_mode = 'NULLABLE'
             else:
                 field = types
-            
+
+    #logger.info('defining schema for %s', field)
     if isinstance(field['type'], list):
         if ("null" in field['type']):
             schema_mode = 'NULLABLE'
@@ -110,11 +111,18 @@ def define_schema(field, name):
         logger.debug("built for object {}".format(schema_name))
         logger.debug("with {}".format(schema_fields))
     if schema_type == "array":
-        t_type = field.get('items').get('type')
+
+        if 'anyOf' in field.get('items') and len(field.get('items').get('anyOf')) > 0:
+            t_type = field.get('items').get('anyOf')[0].get('type')
+        else:
+            t_type = field.get('items').get('type')
+        #logger.info('t_type: %s', t_type)
+
         if isinstance(t_type, list):
             schema_type = t_type[-1] if t_type[0] == "null" else t_type[0]
         else:
             schema_type = t_type
+        #logger.info('schema_type: %s', schema_type)
 
         if schema_type == "array":
             return define_schema(field.get('items'), name)
@@ -181,9 +189,12 @@ def build_schema(schema, initial=False):
             continue
 
         schema_name, schema_type, schema_mode, schema_description, schema_fields = define_schema(properties[key], key)
-        logger.info("building schema with %s %s %s %s %s", schema_name, schema_type, schema_mode, schema_description, schema_fields)
-        SCHEMA.append(SchemaField(schema_name, schema_type, schema_mode, schema_description, schema_fields))
+        #logger.info("building schema with %s %s %s %s %s", schema_name, schema_type, schema_mode, schema_description, schema_fields)
+        schema_field = SchemaField(schema_name, schema_type, schema_mode, schema_description, schema_fields)
+        #logger.info("schema_field: {}".format(schema_field))
+        SCHEMA.append(schema_field)
 
+    #logger.info("returning schema %s", SCHEMA)
     return SCHEMA
 
 def formatRecord(json):
@@ -369,13 +380,18 @@ def persist_lines_stream(project_id, dataset_id, credentials=None, lines=None, v
             state = msg.value
 
         elif isinstance(msg, singer.SchemaMessage):
-            table = msg.stream 
+            table = msg.stream
+
+            # Some schema are coming without pre`operties, just ignore them
+            if not 'properties' in msg.schema:
+                continue
+
             schemas[table] = msg.schema
             key_properties[table] = msg.key_properties
-            # logger.info("Dealing with {}".format(table))
-            # logger.info("Table Schema Info - {}".format(dataset.table(table)))
-            # logger.info("Raw Schema Info - {}".format(schemas[table]))
-            # logger.info("Schema Info - {}".format(build_schema(schemas[table])))
+            logger.info("Dealing with {}".format(table))
+            logger.info("Table Schema Info - {}".format(dataset.table(table)))
+            logger.info("Raw Schema Info - {}".format(schemas[table]))
+            logger.info("Schema Info - {}".format(build_schema(schemas[table])))
             tables[table] = bigquery.Table(dataset.table(formatName(table, "table")), schema=build_schema(schemas[table], initial=True))
             rows[table] = 0
             errors[table] = None
